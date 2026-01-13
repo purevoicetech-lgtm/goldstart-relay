@@ -2,6 +2,7 @@
     "name": "twilio-gemini-relay",
     "version": "1.0.0",
     "description": "WebSocket relay for Twilio Media Streams",
+    "type": "module",
     "main": "relay.js",
     "scripts": {
         "start": "node relay.js"

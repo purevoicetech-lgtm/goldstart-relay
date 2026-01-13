@@ -9,7 +9,7 @@
  * Point your Twilio Stream to: wss://relay.purevoice.tech/stream?client=client_id
  */
 
-import WebSocket from 'ws';
+import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 
 // CONFIGURATION: Add your clients here
@@ -29,7 +29,7 @@ const CLIENT_CONFIGS = {
 };
 
 const server = createServer();
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws, req) => {
     console.log('New connection attempt...');

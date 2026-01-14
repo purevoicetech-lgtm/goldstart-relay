@@ -119,14 +119,15 @@ wss.on('connection', (ws, req) => {
                 const pcm16 = upsample8to16(pcm8);
 
                 // 3. Send to Gemini
-                geminiWs.send(JSON.stringify({
+                const inputMsg = {
                     realtime_input: {
                         media_chunks: [{
                             data: pcm16.toString('base64'),
                             mime_type: "audio/pcm;rate=16000"
                         }]
                     }
-                }));
+                };
+                geminiWs.send(JSON.stringify(inputMsg));
             }
 
             if (data.event === 'stop') {
@@ -139,37 +140,49 @@ wss.on('connection', (ws, req) => {
     });
 
     // --- GEMINI -> TWILIO ---
+    let audioChunkCount = 0;
     geminiWs.on('message', (message) => {
         try {
             const response = JSON.parse(message);
 
-            if (response.setup_complete) {
+            // Handle both setup_complete (snake_case) and setupComplete (camelCase)
+            if (response.setup_complete || response.setupComplete) {
                 console.log('Gemini AI is ready and listening!');
             }
 
-            if (response.server_content?.model_turn?.parts) {
-                response.server_content.model_turn.parts.forEach(part => {
-                    if (part.inline_data?.data && streamSid) {
-                        // 1. Gemini sends 24kHz PCM
-                        const pcm24Buffer = Buffer.from(part.inline_data.data, 'base64');
+            // Handle both server_content (snake_case) and serverContent (camelCase)
+            const serverContent = response.server_content || response.serverContent;
+            if (serverContent) {
+                // Handle both model_turn (snake_case) and modelTurn (camelCase)
+                const modelTurn = serverContent.model_turn || serverContent.modelTurn;
+                if (modelTurn?.parts) {
+                    modelTurn.parts.forEach(part => {
+                        if (part.inline_data?.data && streamSid) {
+                            audioChunkCount++;
+                            if (audioChunkCount % 10 === 0) console.log(`Sending audio chunk #${audioChunkCount} to Twilio`);
 
-                        // 2. Downsample to 8kHz
-                        const pcm8 = downsample24to8(pcm24Buffer);
+                            // 1. Gemini sends 24kHz PCM
+                            const pcm24Buffer = Buffer.from(part.inline_data.data, 'base64');
 
-                        // 3. Encode to Mulaw for Twilio
-                        const mulawBuffer = mulaw.encode(pcm8);
+                            // 2. Downsample to 8kHz
+                            const pcm8 = downsample24to8(pcm24Buffer);
 
-                        // 4. Send to Twilio
-                        ws.send(JSON.stringify({
-                            event: 'media',
-                            streamSid: streamSid,
-                            media: { payload: Buffer.from(mulawBuffer).toString('base64') }
-                        }));
-                    }
-                });
+                            // 3. Encode to Mulaw for Twilio
+                            const mulawBuffer = mulaw.encode(pcm8);
+
+                            // 4. Send to Twilio
+                            ws.send(JSON.stringify({
+                                event: 'media',
+                                streamSid: streamSid,
+                                media: { payload: Buffer.from(mulawBuffer).toString('base64') }
+                            }));
+                        }
+                    });
+                }
             }
         } catch (e) {
             console.error('Relay Error (Gemini side):', e.message);
+            console.error('Buffer details:', message.toString().substring(0, 100));
         }
     });
 

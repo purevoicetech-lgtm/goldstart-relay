@@ -148,7 +148,22 @@ wss.on('connection', (ws, req) => {
             // Handle both setup_complete (snake_case) and setupComplete (camelCase)
             if (response.setup_complete || response.setupComplete) {
                 console.log('Gemini AI is ready and listening!');
+
+                // Trigger an initial greeting so the user knows it's working
+                console.log('Triggering initial greeting...');
+                geminiWs.send(JSON.stringify({
+                    client_content: {
+                        turns: [{
+                            role: "user",
+                            parts: [{ text: "Hello! Please greet the caller and introduce yourself." }]
+                        }],
+                        turn_complete: true
+                    }
+                }));
             }
+
+            // Log every message from Gemini briefly to see the structure
+            console.log('Gemini message keys:', Object.keys(response));
 
             // Handle both server_content (snake_case) and serverContent (camelCase)
             const serverContent = response.server_content || response.serverContent;

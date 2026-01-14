@@ -6,85 +6,73 @@ const CLIENT_CONFIGS = {
     goldstar: {
         name: 'Goldstar Plumbing',
         apiKey: process.env.GOLDSTAR_API_KEY,
-        instructions:
-            'You are a friendly receptionist for Goldstar Plumbing. Answer questions about leaks, water heaters, and drain cleaning. Encourage them to book a technician at (425) 300-9900.',
-    },
+        instructions: 'You are a friendly receptionist for Goldstar Plumbing. Answer questions about leaks, water heaters, and drain cleaning. Encourage them to book a technician at (425) 300-9900.'
+    }
 };
 
 // --- AUDIO HELPERS ---
 
-// Up-sample 8kHz PCM to 16kHz PCM (linear duplication)
-function upsample8to16(buffer) {
-    const samples = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
-    const result = new Int16Array(samples.length * 2);
-    for (let i = 0; i < samples.length; i++) {
-        result[i * 2] = samples[i];
-        result[i * 2 + 1] = samples[i];
+// Upsample 8kHz PCM to 16kHz PCM
+function upsample8to16(pcm8) {
+    const result = new Int16Array(pcm8.length * 2);
+    for (let i = 0; i < pcm8.length; i++) {
+        result[i * 2] = pcm8[i];
+        result[i * 2 + 1] = pcm8[i];
     }
-    return Buffer.from(result.buffer);
+    return Buffer.from(result.buffer, result.byteOffset, result.byteLength);
 }
 
-// Down-sample 24kHz PCM to 8kHz PCM (simple decimation)
+// Downsample 24kHz PCM to 8kHz PCM
 function downsample24to8(buffer) {
-    const samples = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
-    const result = new Int16Array(Math.floor(samples.length / 3));
+    const pcm24 = new Int16Array(buffer.buffer, buffer.byteOffset, buffer.length / 2);
+    const result = new Int16Array(Math.floor(pcm24.length / 3));
     for (let i = 0; i < result.length; i++) {
-        result[i] = samples[i * 3];
+        result[i] = pcm24[i * 3];
     }
-    return Buffer.from(result.buffer);
+    return result;
 }
 
-// --- SERVER LOGIC ---
+// --- SERVER SETUP ---
 
-function requestHandler(req, res) {
-    if (req.method === 'GET' && req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: 'ok' }));
+const server = createServer((req, res) => {
+    if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Relay is active');
+    } else {
+        res.writeHead(404);
+        res.end();
     }
-    if (req.method === 'POST' && req.url === '/relay') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true }));
-        });
-        return;
-    }
-    res.writeHead(404);
-    res.end();
-}
+});
 
-const server = createServer(requestHandler);
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws, req) => {
-    console.log('New connection attempt...');
+    console.log('New connection attempt from Twilio...');
     const urlParams = new URLSearchParams(req.url.split('?')[1]);
     const clientId = urlParams.get('client') || 'goldstar';
     const config = CLIENT_CONFIGS[clientId];
 
     if (!config || !config.apiKey) {
-        console.error('Missing API Key or Config');
+        console.error('ERROR: Missing API Key or Config for client:', clientId);
         ws.close();
         return;
     }
 
-    console.log(`Talking to Goldstar AI (Gemini)...`);
+    console.log(`Baton handover: ${config.name} AI is waking up...`);
 
     const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${config.apiKey}`;
     const geminiWs = new WebSocket(geminiUrl);
 
     let streamSid = null;
 
-    // --- TWILIO -> RELAY -> GEMINI ---
+    // --- TWILIO -> GEMINI ---
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
             if (data.event === 'start') {
                 streamSid = data.start.streamSid;
-                console.log('Call started:', streamSid);
+                console.log('Stream sequence started:', streamSid);
 
-                // Gemini Setup
                 geminiWs.send(JSON.stringify({
                     setup: {
                         model: "models/gemini-2.0-flash-exp",
@@ -99,11 +87,10 @@ wss.on('connection', (ws, req) => {
 
             if (data.event === 'media' && geminiWs.readyState === WebSocket.OPEN) {
                 // 1. Decode Mulaw (8kHz) to PCM16 (8kHz)
-                const mulawBuffer = Buffer.from(data.media.payload, 'base64');
-                const pcm8 = mulaw.decode(mulawBuffer);
+                const pcm8 = mulaw.decode(Buffer.from(data.media.payload, 'base64'));
 
-                // 2. Upsample PCM16 (8kHz) to PCM16 (16kHz)
-                const pcm16 = upsample8to16(Buffer.from(pcm8.buffer));
+                // 2. Upsample to 16kHz for Gemini
+                const pcm16 = upsample8to16(pcm8);
 
                 // 3. Send to Gemini
                 geminiWs.send(JSON.stringify({
@@ -115,46 +102,58 @@ wss.on('connection', (ws, req) => {
                     }
                 }));
             }
+
+            if (data.event === 'stop') {
+                console.log('Call ended via Twilio stop event');
+                geminiWs.close();
+            }
         } catch (e) {
-            console.error('Twilio Error:', e);
+            console.error('Relay Error (Twilio side):', e.message);
         }
     });
 
-    // --- GEMINI -> RELAY -> TWILIO ---
+    // --- GEMINI -> TWILIO ---
     geminiWs.on('message', (message) => {
         try {
             const response = JSON.parse(message);
-            if (response.server_content && response.server_content.model_turn) {
-                const parts = response.server_content.model_turn.parts;
-                parts.forEach(part => {
-                    if (part.inline_data && part.inline_data.data && streamSid) {
-                        // 1. Response is PCM16 (24kHz)
-                        const pcm24 = Buffer.from(part.inline_data.data, 'base64');
 
-                        // 2. Downsample PCM16 (24kHz) to PCM16 (8kHz)
-                        const pcm8 = downsample24to8(pcm24);
+            if (response.setup_complete) {
+                console.log('Gemini AI is ready and listening!');
+            }
 
-                        // 3. Encode PCM16 (8kHz) to Mulaw (8kHz)
-                        const mulawEncoded = mulaw.encode(new Int16Array(pcm8.buffer, pcm8.byteOffset, pcm8.length / 2));
+            if (response.server_content?.model_turn?.parts) {
+                response.server_content.model_turn.parts.forEach(part => {
+                    if (part.inline_data?.data && streamSid) {
+                        // 1. Gemini sends 24kHz PCM
+                        const pcm24Buffer = Buffer.from(part.inline_data.data, 'base64');
+
+                        // 2. Downsample to 8kHz
+                        const pcm8 = downsample24to8(pcm24Buffer);
+
+                        // 3. Encode to Mulaw for Twilio
+                        const mulawBuffer = mulaw.encode(pcm8);
 
                         // 4. Send to Twilio
                         ws.send(JSON.stringify({
                             event: 'media',
                             streamSid: streamSid,
-                            media: { payload: Buffer.from(mulawEncoded).toString('base64') }
+                            media: { payload: Buffer.from(mulawBuffer).toString('base64') }
                         }));
                     }
                 });
             }
         } catch (e) {
-            console.error('Gemini Error:', e);
+            console.error('Relay Error (Gemini side):', e.message);
         }
     });
 
-    ws.on('close', () => { console.log('Call ended'); geminiWs.close(); });
-    geminiWs.on('close', () => { console.log('AI closed'); ws.close(); });
-    geminiWs.on('error', (err) => console.error('Gemini error:', err));
+    ws.on('close', () => { geminiWs.close(); });
+    geminiWs.on('close', () => { console.log('Gemini session ended'); ws.close(); });
+    geminiWs.on('error', (err) => console.error('Gemini Connection Error:', err.message));
+    ws.on('error', (err) => console.error('Twilio Connection Error:', err.message));
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => console.log('Relay listening on', PORT));
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Relay server live on port ${PORT}`);
+});

@@ -8,7 +8,8 @@
         "start": "node relay.js"
     },
     "dependencies": {
-        "ws": "^8.16.0"
+        "ws": "^8.16.0",
+        "alawmulaw": "^6.0.0"
     },
     "engines": {
         "node": "18.x"

@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
-import { mulaw } from 'alawmulaw';
+import pkg from 'alawmulaw';
+const { mulaw } = pkg;
 
 const CLIENT_CONFIGS = {
     goldstar: {

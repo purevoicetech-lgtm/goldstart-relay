@@ -61,8 +61,12 @@ wss.on('connection', (ws, req) => {
 
     console.log(`Baton handover: ${config.name} AI is waking up...`);
 
-    const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${config.apiKey}`;
+    const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(config.apiKey)}`;
     const geminiWs = new WebSocket(geminiUrl);
+
+    geminiWs.on('open', () => {
+        console.log('CONNECTED to Gemini AI WebSocket');
+    });
 
     let streamSid = null;
 
@@ -75,17 +79,28 @@ wss.on('connection', (ws, req) => {
                 console.log('Stream sequence started:', streamSid);
 
                 const sendSetup = () => {
+                    console.log(`Sending setup to Gemini (State: ${geminiWs.readyState})`);
                     if (geminiWs.readyState === WebSocket.OPEN) {
-                        geminiWs.send(JSON.stringify({
+                        const setupMsg = {
                             setup: {
                                 model: "models/gemini-2.0-flash-exp",
                                 generation_config: {
                                     response_modalities: ["AUDIO"],
-                                    speech_config: { voice_config: { prebuilt_voice_config: { voice_name: "Puck" } } }
+                                    speech_config: {
+                                        voice_config: {
+                                            prebuilt_voice_config: {
+                                                voice_name: "Puck"
+                                            }
+                                        }
+                                    }
                                 },
                                 system_instruction: { parts: [{ text: config.instructions }] }
                             }
-                        }));
+                        };
+                        console.log('Setup message:', JSON.stringify(setupMsg, null, 2));
+                        geminiWs.send(JSON.stringify(setupMsg));
+                    } else {
+                        console.error('Failed to send setup: Gemini WebSocket not OPEN (ReadyState: ' + geminiWs.readyState + ')');
                     }
                 };
 
@@ -158,8 +173,17 @@ wss.on('connection', (ws, req) => {
         }
     });
 
-    ws.on('close', () => { geminiWs.close(); });
-    geminiWs.on('close', () => { console.log('Gemini session ended'); ws.close(); });
+    ws.on('close', () => {
+        console.log('Twilio connection closed');
+        if (geminiWs.readyState === WebSocket.OPEN || geminiWs.readyState === WebSocket.CONNECTING) {
+            geminiWs.close();
+        }
+    });
+
+    geminiWs.on('close', (code, reason) => {
+        console.log(`Gemini session ended (Code: ${code}, Reason: ${reason || 'none'})`);
+        ws.close();
+    });
     geminiWs.on('error', (err) => console.error('Gemini Connection Error:', err.message));
     ws.on('error', (err) => console.error('Twilio Connection Error:', err.message));
 });

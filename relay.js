@@ -172,12 +172,14 @@ wss.on('connection', (ws, req) => {
                 const modelTurn = serverContent.model_turn || serverContent.modelTurn;
                 if (modelTurn?.parts) {
                     modelTurn.parts.forEach(part => {
-                        if (part.inline_data?.data && streamSid) {
+                        const audioData = part.inline_data?.data || part.inlineData?.data;
+                        if (audioData && streamSid) {
                             audioChunkCount++;
-                            if (audioChunkCount % 10 === 0) console.log(`Sending audio chunk #${audioChunkCount} to Twilio`);
+                            if (audioChunkCount === 1) console.log('FIRST audio chunk received from Gemini!');
+                            if (audioChunkCount % 20 === 0) console.log(`Sending audio chunk #${audioChunkCount} to Twilio`);
 
                             // 1. Gemini sends 24kHz PCM
-                            const pcm24Buffer = Buffer.from(part.inline_data.data, 'base64');
+                            const pcm24Buffer = Buffer.from(audioData, 'base64');
 
                             // 2. Downsample to 8kHz
                             const pcm8 = downsample24to8(pcm24Buffer);

@@ -74,16 +74,26 @@ wss.on('connection', (ws, req) => {
                 streamSid = data.start.streamSid;
                 console.log('Stream sequence started:', streamSid);
 
-                geminiWs.send(JSON.stringify({
-                    setup: {
-                        model: "models/gemini-2.0-flash-exp",
-                        generation_config: {
-                            response_modalities: ["AUDIO"],
-                            speech_config: { voice_config: { prebuilt_voice_config: { voice_name: "Puck" } } }
-                        },
-                        system_instruction: { parts: [{ text: config.instructions }] }
+                const sendSetup = () => {
+                    if (geminiWs.readyState === WebSocket.OPEN) {
+                        geminiWs.send(JSON.stringify({
+                            setup: {
+                                model: "models/gemini-2.0-flash-exp",
+                                generation_config: {
+                                    response_modalities: ["AUDIO"],
+                                    speech_config: { voice_config: { prebuilt_voice_config: { voice_name: "Puck" } } }
+                                },
+                                system_instruction: { parts: [{ text: config.instructions }] }
+                            }
+                        }));
                     }
-                }));
+                };
+
+                if (geminiWs.readyState === WebSocket.CONNECTING) {
+                    geminiWs.once('open', sendSetup);
+                } else {
+                    sendSetup();
+                }
             }
 
             if (data.event === 'media' && geminiWs.readyState === WebSocket.OPEN) {

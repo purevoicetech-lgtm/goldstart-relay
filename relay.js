@@ -36,7 +36,7 @@ function downsample24to8(buffer) {
 // --- SERVER SETUP ---
 
 const server = createServer((req, res) => {
-    if (req.url === '/') {
+    if (req.url === '/' || req.url === '/relay') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('Relay is active');
     } else {
